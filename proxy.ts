@@ -6,6 +6,8 @@ export const config = {
     "/datasets/:path*",
     "/experiments/:path*",
     "/models/:path*",
+    "/prompts/:path*",
+    "/analytics/:path*",
     "/comparison/:path*",
     "/evaluations/:path*",
     "/settings/:path*",

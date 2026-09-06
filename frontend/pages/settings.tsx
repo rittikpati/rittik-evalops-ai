@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "motion/react";
 import { DashboardLayout, PageContainer, Section } from "@/components/layout/DashboardLayout";
 import { Card } from "@/components/ui/Card";
@@ -9,28 +9,8 @@ import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { useToast } from "@/components/ui/Toast";
 import { applyTheme, getStoredTheme, type ThemePreference } from "@/frontend/lib/theme";
-import { mockSettings, mockModels } from "@/data/mockData";
-import {
-  User,
-  Shield,
-  Bell,
-  Key,
-  Database,
-  Cpu,
-  Globe,
-  Mail,
-  Lock,
-  Eye,
-  EyeOff,
-  Copy,
-  Trash2,
-  Plus,
-  Check,
-  AlertCircle,
-  Settings as SettingsIcon,
-  CreditCard,
-  Users,
-} from "@/components/layout/Icons";
+import { User, Key, Users, AlertCircle } from "@/components/layout/Icons";
+import type { EvaluationRun } from "@/lib/evaluations/types";
 
 export interface EditableUser {
   id?: string;
@@ -108,50 +88,75 @@ function ProfileForm({ user, onSaved }: { user: EditableUser | null; onSaved: (u
   );
 }
 
+interface SystemInfo {
+  openRouterConfigured: boolean;
+  aiProvider: string;
+  defaultJudgeModel: string;
+  hasSupabase: boolean;
+}
+
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("profile");
-  const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
-  const [notifications, setNotifications] = useState(mockSettings.notifications);
-  const [evaluation, setEvaluation] = useState(mockSettings.evaluation);
-  const [security, setSecurity] = useState(mockSettings.security);
-  const [openRouterKey, setOpenRouterKey] = useState("");
-  const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
   const [user, setUser] = useState<EditableUser | null>(null);
   const [themePref, setThemePref] = useState<ThemePreference>(getStoredTheme);
+  const [system, setSystem] = useState<SystemInfo | null>(null);
+  const [runs, setRuns] = useState<EvaluationRun[]>([]);
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/auth/session")
-      .then(async (res) => {
-        if (cancelled || res.status !== 200) return;
-        const data = (await res.json().catch(() => ({}))) as { status?: string; user?: EditableUser };
-        if (data.status === "success" && data.user) setUser(data.user);
-      })
-      .catch(() => {});
+    Promise.all([
+      fetch("/api/auth/session").then((r) => r.json().catch(() => ({}))),
+      fetch("/api/settings/system").then((r) => r.json().catch(() => ({}))),
+      fetch("/api/evaluations").then((r) => r.json().catch(() => ({}))),
+    ]).then(([session, info, evals]) => {
+      if (cancelled) return;
+      if (session.status === "success" && session.user) setUser(session.user);
+      if (info.status === "success" && info.system) setSystem(info.system);
+      if (evals.status === "success" && Array.isArray(evals.runs)) setRuns(evals.runs);
+    }).catch(() => {});
     return () => {
       cancelled = true;
     };
   }, []);
 
+  const usage = useMemo(() => {
+    const totalTokens = runs.reduce(
+      (n, r) => n + r.results.reduce((m, res) => m + (res.totalTokens || 0), 0),
+      0
+    );
+    const totalCost = runs.reduce(
+      (n, r) => n + r.results.reduce((m, res) => m + (res.estimatedCost ?? 0), 0),
+      0
+    );
+    const completed = runs.filter((r) => r.status === "completed" || r.status === "partial").length;
+    const failed = runs.filter((r) => r.status === "failed").length;
+    const executions = runs.reduce((n, r) => n + (r.total || 0), 0);
+    return { totalTokens, totalCost, completed, failed, executions };
+  }, [runs]);
+
   const profileName = user?.name || "Your Name";
   const profileEmail = user?.email || "you@example.com";
   const profileInitials = profileName.split(" ").filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "ME";
 
+  const providerLabel = system
+    ? system.aiProvider && system.aiProvider !== "auto"
+      ? system.aiProvider
+      : system.openRouterConfigured
+        ? "OpenRouter (auto)"
+        : "Mock provider (no key configured)"
+    : "…";
+
   const tabs = [
     { id: "profile", label: "Profile", icon: User },
+    { id: "providers", label: "Providers", icon: Key },
     { id: "workspace", label: "Workspace", icon: Users },
-    { id: "api", label: "API Keys", icon: Key },
-    { id: "models", label: "Models", icon: Cpu },
-    { id: "evaluation", label: "Evaluation", icon: SettingsIcon },
-    { id: "notifications", label: "Notifications", icon: Bell },
-    { id: "security", label: "Security", icon: Shield },
   ];
 
   return (
     <DashboardLayout>
       <PageContainer
         title="Settings"
-        description="Manage your workspace, API keys, and evaluation preferences"
+        description="Manage your account, provider configuration, and workspace"
       >
         <div className="flex flex-col lg:flex-row gap-6">
           <motion.div
@@ -202,7 +207,7 @@ export default function SettingsPage() {
                       <div className="flex-1 space-y-4 min-w-0">
                         <div>
                           <p className="text-lg font-semibold tracking-tight text-[#F5F1EB]">{profileName}</p>
-                          <p className="text-sm text-stone-400 mt-0.5">{profileEmail} Â· {user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Member"}</p>
+                          <p className="text-sm text-stone-400 mt-0.5">{profileEmail} &middot; {user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Member"}</p>
                         </div>
                         <ProfileForm key={user?.id || "loading"} user={user} onSaved={setUser} />
                       </div>
@@ -246,156 +251,106 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {activeTab === "workspace" && (
+            {activeTab === "providers" && (
               <div className="space-y-6">
-                <Section title="Workspace" description="Manage your team and billing">
-                  <Card variant="elevated" className="p-6 space-y-6">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <Input label="Workspace Name" defaultValue={mockSettings.workspace.name} />
-                      <Input label="Slug" defaultValue={mockSettings.workspace.slug} />
-                      <div>
-                        <label className="label">Plan</label>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="brand">Enterprise</Badge>
-                          <span className="text-sm text-stone-400">{mockSettings.workspace.members} members</span>
-                        </div>
-                      </div>
-                      <div>
-                        <label className="label">Billing</label>
-                        <Button variant="outline" size="sm" leftIcon={<CreditCard className="h-4 w-4" />}>Manage Billing</Button>
-                      </div>
-                    </div>
-                  </Card>
-
-                  <Card variant="elevated" className="p-6">
-                    <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2"><Users className="h-4 w-4" /> Team Members (12)</h3>
-                    <div className="space-y-3">
-                      {[
-                        { name: profileName, email: profileEmail, role: user?.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Member", avatar: profileInitials },
-                        { name: "Alex Chen", email: "alex@rittikevalops.ai", role: "Member", avatar: "AC" },
-                        { name: "Sarah Miller", email: "sarah@rittikevalops.ai", role: "Viewer", avatar: "SM" },
-                      ].map((member) => (
-                        <div key={member.email} className="flex items-center justify-between p-3 rounded-xl bg-white/[0.04] border border-[#2A2A28]">
-                          <div className="flex items-center gap-3">
-                            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-[#C8A96E] to-[#8B6A43] flex items-center justify-center text-sm font-bold text-[#F5F1EB]">{member.avatar}</div>
-                            <div><p className="font-medium text-foreground">{member.name}</p><p className="text-xs text-stone-400">{member.email}</p></div>
-                          </div>
-                          <Badge variant={member.role === "Admin" ? "brand" : member.role === "Member" ? "info" : "neutral"}>{member.role}</Badge>
-                        </div>
-                      ))}
-                    </div>
-                    <Button variant="outline" className="w-full mt-4" leftIcon={<Plus className="h-4 w-4" />}>Invite Member</Button>
-                  </Card>
-                </Section>
-              </div>
-            )}
-
-            {activeTab === "api" && (
-              <div className="space-y-6">
-                <Section title="OpenRouter Configuration" description="Connect your LLM providers via OpenRouter (never expose real keys)" action={<Badge variant="success" dot>Connected</Badge>}>
+                <Section
+                  title="LLM Provider"
+                  description="Provider credentials come from server environment variables — keys are never exposed in the UI"
+                  action={
+                    <Badge variant={system?.openRouterConfigured ? "success" : "neutral"} dot>
+                      {system ? (system.openRouterConfigured ? "Configured" : "Not configured") : "Checking…"}
+                    </Badge>
+                  }
+                >
                   <Card variant="elevated" className="p-6 space-y-4">
                     <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 flex gap-3">
                       <AlertCircle className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5" />
-                      <div><p className="text-sm font-medium text-amber-400">Security Notice</p><p className="text-xs text-stone-400 mt-1">API keys are masked and never exposed in the UI. Use environment variables in production.</p></div>
-                    </div>
-                    <div>
-                      <label className="label">OpenRouter API Key</label>
-                      <div className="flex gap-2">
-                        <div className="relative flex-1">
-                          <Input type={showOpenRouterKey ? "text" : "password"} placeholder="sk-or-v1-â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" value={openRouterKey} onChange={(e) => setOpenRouterKey(e.target.value)} className="pr-10" />
-                          <button type="button" onClick={() => setShowOpenRouterKey(!showOpenRouterKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-[#F5F1EB]">
-                            {showOpenRouterKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                          </button>
-                        </div>
-                        <Button variant="primary">Save</Button>
+                      <div className="text-sm text-stone-400">
+                        <p className="font-medium text-amber-400">Security first</p>
+                        <p className="mt-1">API keys are read from the server&apos;s environment and never sent to or stored in the browser. To swap providers, update these variables and restart the server.</p>
                       </div>
-                      <p className="text-xs text-stone-400 mt-2">Get your key from <a href="#" className="text-[#C8A96E] hover:underline">openrouter.ai/keys</a> â€¢ Enables GPT, Claude, Llama, Qwen and 200+ models</p>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-4 border-t border-[#2A2A28]">
-                      <div className="p-3 rounded-xl bg-white/[0.04] border border-[#2A2A28]"><p className="text-xs text-stone-400">Provider</p><p className="font-medium">OpenRouter</p><p className="text-xs text-success-400">â— Active</p></div>
-                      <div className="p-3 rounded-xl bg-white/[0.04] border border-[#2A2A28]"><p className="text-xs text-stone-400">Models Available</p><p className="font-medium">200+</p><p className="text-xs text-stone-400">via OpenRouter</p></div>
-                      <div className="p-3 rounded-xl bg-white/[0.04] border border-[#2A2A28]"><p className="text-xs text-stone-400">Usage This Month</p><p className="font-medium">$1,247</p><p className="text-xs text-stone-400">1.2M tokens</p></div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="p-3 rounded-xl bg-white/[0.04] border border-[#2A2A28]"><p className="text-xs text-stone-400">Provider</p><p className="font-medium">{providerLabel}</p></div>
+                      <div className="p-3 rounded-xl bg-white/[0.04] border border-[#2A2A28]"><p className="text-xs text-stone-400">Default Judge Model</p><p className="font-medium">{system?.defaultJudgeModel ?? "…"}</p></div>
+                      <div className="p-3 rounded-xl bg-white/[0.04] border border-[#2A2A28]"><p className="text-xs text-stone-400">Supabase Sync</p><p className="font-medium">{system?.hasSupabase ? "Enabled" : "Disabled"}</p></div>
                     </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-4 border-t border-[#2A2A28]">
+                      <div className="p-3 rounded-xl bg-white/[0.04] border border-[#2A2A28]"><p className="text-xs text-stone-400">Evaluations</p><p className="font-medium">{usage.completed} complete &middot; {usage.failed} failed</p></div>
+                      <div className="p-3 rounded-xl bg-white/[0.04] border border-[#2A2A28]"><p className="text-xs text-stone-400">Model Executions</p><p className="font-medium">{usage.executions.toLocaleString()}</p></div>
+                      <div className="p-3 rounded-xl bg-white/[0.04] border border-[#2A2A28]"><p className="text-xs text-stone-400">Tokens Used</p><p className="font-medium">{usage.totalTokens.toLocaleString()}</p></div>
+                      <div className="p-3 rounded-xl bg-white/[0.04] border border-[#2A2A28]"><p className="text-xs text-stone-400">Estimated Cost</p><p className="font-medium">${usage.totalCost.toFixed(2)}</p></div>
+                    </div>
+                    <p className="text-xs text-stone-500 pt-2 border-t border-[#2A2A28]">Usage reflects evaluation runs started from this workspace. Numbers update on reload.</p>
                   </Card>
                 </Section>
 
-                <Section title="API Keys" description="Manage provider API keys for direct access">
-                  <Card variant="elevated" className="p-6">
-                    <div className="space-y-3">
-                      {mockSettings.apiKeys.map((key) => (
-                        <div key={key.id} className="flex items-center gap-4 p-4 rounded-xl bg-white/[0.04] border border-[#2A2A28]">
-                          <div className="h-10 w-10 rounded-xl bg-[#C8A96E]/10 flex items-center justify-center"><Key className="h-5 w-5 text-[#C8A96E]" /></div>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium text-foreground">{key.name}</p>
-                            <p className="text-xs text-stone-400 flex items-center gap-2"><span className="px-1.5 py-0.5 bg-white/[0.04] rounded text-[10px]">{key.provider}</span> {showKeys[key.id] ? key.key : key.key.replace(/./g, "â€¢")} â€¢ Last used {key.lastUsed ? new Date(key.lastUsed).toLocaleDateString() : "Never"}</p>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <Button variant="ghost" size="icon" onClick={() => setShowKeys(s => ({ ...s, [key.id]: !s[key.id] }))}>{showKeys[key.id] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</Button>
-                            <Button variant="ghost" size="icon" onClick={() => navigator.clipboard.writeText(key.key)}><Copy className="h-4 w-4" /></Button>
-                            <Button variant="ghost" size="icon" className="text-danger-400 hover:bg-danger-500/10"><Trash2 className="h-4 w-4" /></Button>
-                          </div>
-                        </div>
-                      ))}
+                <Section title="Environment Variables" description="The variables this deployment reads on startup">
+                  <Card variant="elevated" className="p-6 space-y-2">
+                    <div className="flex items-center justify-between py-3 border-b border-[#2A2A28] last:border-0">
+                      <div><p className="font-medium font-mono text-sm">OPENROUTER_API_KEY</p><p className="text-xs text-stone-400">Enables real-model runs via OpenRouter (200+ models)</p></div>
+                      <Badge variant={system?.openRouterConfigured ? "success" : "neutral"}>{system?.openRouterConfigured ? "Set" : "Missing"}</Badge>
                     </div>
-                    <Button variant="outline" className="w-full mt-4" leftIcon={<Plus className="h-4 w-4" />}>Add API Key</Button>
-                  </Card>
-                </Section>
-              </div>
-            )}
-
-            {activeTab === "models" && (
-              <div className="space-y-6">
-                <Section title="Default Models" description="Configure default models for new experiments">
-                  <Card variant="elevated" className="p-6 space-y-4">
-                    <div><label className="label">Default Evaluation Model</label><select className="input"><option>GPT-4o (OpenAI)</option><option>Claude 3.5 Sonnet</option><option>Llama 3.1 405B</option></select><p className="text-xs text-stone-400 mt-1">Used when no model is specified</p></div>
-                    <div><label className="label">Default Judge Model</label><select className="input" value={evaluation.defaultJudgeModel} onChange={(e) => setEvaluation({ ...evaluation, defaultJudgeModel: e.target.value })}><option value="free-router">Free Router ($0)</option><option value="gpt-4o">GPT-4o (Recommended)</option><option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option><option value="gpt-4o-mini">GPT-4o Mini (Faster)</option></select><p className="text-xs text-stone-400 mt-1">LLM used as judge for evaluation scoring</p></div>
-                    <div><label className="label">Fallback Model</label><select className="input"><option>Claude 3 Haiku (Fast)</option><option>GPT-4o Mini</option></select></div>
+                    <div className="flex items-center justify-between py-3 border-b border-[#2A2A28] last:border-0">
+                      <div><p className="font-medium font-mono text-sm">AI_PROVIDER</p><p className="text-xs text-stone-400">Force a specific provider, or leave unset for auto-detection</p></div>
+                      <Badge variant="info">{system ? (system.aiProvider && system.aiProvider !== "auto" ? system.aiProvider : "auto") : "…"}</Badge>
+                    </div>
+                    <div className="flex items-center justify-between py-3 border-b border-[#2A2A28] last:border-0">
+                      <div><p className="font-medium font-mono text-sm">JUDGE_MODEL_ID</p><p className="text-xs text-stone-400">Default LLM used for evaluation scoring</p></div>
+                      <Badge variant="info">{system?.defaultJudgeModel ?? "…"}</Badge>
+                    </div>
+                    <div className="flex items-center justify-between py-3 last:border-0">
+                      <div><p className="font-medium font-mono text-sm">NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY</p><p className="text-xs text-stone-400">Optional: sync runs and datasets to Supabase</p></div>
+                      <Badge variant={system?.hasSupabase ? "success" : "neutral"}>{system?.hasSupabase ? "Set" : "Unset"}</Badge>
+                    </div>
+                    <p className="text-xs text-stone-500 pt-3">Values shown here are status flags only — key material is never revealed.</p>
                   </Card>
                 </Section>
               </div>
             )}
 
-            {activeTab === "evaluation" && (
+            {activeTab === "workspace" && (
               <div className="space-y-6">
-                <Section title="Evaluation Preferences" description="Customize how evaluations are run">
+                <Section title="Workspace" description="Workspace details">
                   <Card variant="elevated" className="p-6 space-y-6">
-                    <div>
-                      <label className="label">Enabled Dimensions</label>
-                      <div className="flex flex-wrap gap-2">
-                        {evaluation.evaluationDimensions.map((dim) => (
-                          <label key={dim} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm bg-[#C8A96E]/10 text-[#C8A96E] border border-[#C8A96E]/20 cursor-pointer">
-                            <input type="checkbox" checked className="h-3 w-3" readOnly /> {dim}
-                          </label>
-                        ))}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <Input label="Workspace Name" defaultValue="RittikEvalOpsAI" />
+                      <Input label="Slug" defaultValue="evalops-ai" />
+                      <div>
+                        <label className="label">Plan</label>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="neutral">Single workspace</Badge>
+                          <span className="text-sm text-stone-400">Local deployment &mdash; no billing</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="label">Deployment</label>
+                        <div className="flex items-center gap-2 h-10">
+                          <Badge variant="info" dot>Self-hosted</Badge>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between"><div><p className="font-medium">Auto-run evaluations</p><p className="text-sm text-stone-400">Automatically start evaluation after experiment creation</p></div><label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={evaluation.autoRunEvaluations} onChange={(e) => setEvaluation({ ...evaluation, autoRunEvaluations: e.target.checked })} className="sr-only peer" /><div className="w-11 h-6 bg-white/[0.06] rounded-full peer peer-checked:bg-[#C8A96E] transition peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[#1A1A1E] after:rounded-full after:h-5 after:w-5 after:transition" /></label></div>
-                    <div><label className="label">Confidence Threshold: {evaluation.confidenceThreshold}</label><input type="range" min="0" max="1" step="0.05" value={evaluation.confidenceThreshold} onChange={(e) => setEvaluation({ ...evaluation, confidenceThreshold: parseFloat(e.target.value) })} className="w-full" /></div>
                   </Card>
                 </Section>
-              </div>
-            )}
 
-            {activeTab === "notifications" && (
-              <Card variant="elevated" className="p-6 space-y-4">
-                <h3 className="font-semibold">Notification Preferences</h3>
-                {Object.entries(notifications).map(([key, value]) => (
-                  <div key={key} className="flex items-center justify-between py-3 border-b border-[#2A2A28] last:border-0">
-                    <div><p className="font-medium capitalize">{key.replace(/([A-Z])/g, " $1")}</p><p className="text-sm text-stone-400">Receive notifications for {key.toLowerCase()}</p></div>
-                    <label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={value as boolean} onChange={(e) => setNotifications({ ...notifications, [key]: e.target.checked })} className="sr-only peer" /><div className="w-11 h-6 bg-white/[0.06] rounded-full peer peer-checked:bg-[#C8A96E] transition peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[#1A1A1E] after:rounded-full after:h-5 after:w-5 after:transition" /></label>
-                  </div>
-                ))}
-              </Card>
-            )}
-
-            {activeTab === "security" && (
-              <div className="space-y-6">
-                <Card variant="elevated" className="p-6 space-y-4">
-                  <h3 className="font-semibold">Security</h3>
-                  <div className="flex items-center justify-between"><div><p className="font-medium">Two-Factor Authentication</p><p className="text-sm text-stone-400">Add an extra layer of security</p></div><Badge variant={security.twoFactorEnabled ? "success" : "neutral"}>{security.twoFactorEnabled ? "Enabled" : "Disabled"}</Badge></div>
-                  <div className="flex items-center justify-between"><div><p className="font-medium">Session Timeout</p><p className="text-sm text-stone-400">Auto logout after inactivity</p></div><select value={security.sessionTimeout} onChange={(e) => setSecurity({ ...security, sessionTimeout: Number(e.target.value) })} className="input w-auto py-2 px-3"><option value={30}>30 minutes</option><option value={60}>1 hour</option><option value={480}>8 hours</option></select></div>
-                  <div className="p-4 rounded-xl bg-danger-500/5 border border-danger-500/20"><p className="font-medium text-danger-400">Danger Zone</p><p className="text-sm text-stone-400 mt-1">Permanently delete your workspace and all data</p><Button variant="ghost" className="mt-3 text-danger-400 border-danger-500/30 hover:bg-danger-500/10" size="sm">Delete Workspace</Button></div>
-                </Card>
+                <Section title="Team Members" description="Who has access to this workspace">
+                  <Card variant="elevated" className="p-6">
+                    {user ? (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/[0.04] border border-[#2A2A28]">
+                          <div className="flex items-center gap-3">
+                            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-[#C8A96E] to-[#8B6A43] flex items-center justify-center text-sm font-bold text-[#F5F1EB]">{profileInitials}</div>
+                            <div><p className="font-medium text-foreground">{profileName}</p><p className="text-xs text-stone-400">{profileEmail}</p></div>
+                          </div>
+                          <Badge variant={user.role === "admin" ? "brand" : "info"}>{user.role.charAt(0).toUpperCase() + user.role.slice(1)}</Badge>
+                        </div>
+                        <p className="text-xs text-stone-500">This deployment runs as a single-account workspace.</p>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-stone-400">Loading…</p>
+                    )}
+                  </Card>
+                </Section>
               </div>
             )}
           </motion.div>
