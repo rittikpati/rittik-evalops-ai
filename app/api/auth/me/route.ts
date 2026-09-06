@@ -1,0 +1,1 @@
+﻿export { PATCH } from "@/backend/api/auth/me";

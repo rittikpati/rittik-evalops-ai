@@ -1,0 +1,1 @@
+﻿export { PATCH, DELETE } from "@/backend/api/models/[modelId]";

@@ -19,7 +19,13 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"]
+      "@/frontend/*": ["./frontend/*"],
+      "@/backend/*": ["./backend/*"],
+      "@/components/*": ["./frontend/components/*"],
+      "@/hooks/*": ["./frontend/hooks/*"],
+      "@/types": ["./frontend/types/index.ts"],
+      "@/data/*": ["./frontend/data/*"],
+      "@/lib/*": ["./backend/lib/*"]
     }
   },
   "include": [

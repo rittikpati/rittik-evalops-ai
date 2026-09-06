@@ -1,0 +1,1 @@
+﻿export { GET } from "@/backend/api/auth/session";

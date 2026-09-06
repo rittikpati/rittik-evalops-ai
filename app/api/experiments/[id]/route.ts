@@ -1,0 +1,1 @@
+﻿export { GET, PUT, DELETE } from "@/backend/api/experiments/[id]";

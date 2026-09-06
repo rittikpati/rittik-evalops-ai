@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  turbopack: { root: process.cwd() },
+  experimental: { proxyClientMaxBodySize: "30mb" },
+  serverExternalPackages: ["xlsx", "pdf-parse", "mammoth"],
 };
 
 export default nextConfig;
