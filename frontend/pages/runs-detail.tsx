@@ -29,6 +29,7 @@ import {
   Eye,
   ChevronLeft,
   ExternalLink,
+  Download,
 } from "@/components/layout/Icons";
 import { formatNumber, formatCurrency, formatPercent, formatRelativeTime, formatDuration } from "@/frontend/lib/utils";
 
@@ -100,6 +101,39 @@ export default function RunDetailPage() {
 
   const filtered = filter === "all" ? results : results.filter((r) => r.model === filter);
   const modelOptions = useMemo(() => Array.from(new Set(results.map((r) => r.model))), [results]);
+
+  const exportCsv = () => {
+    const fmtPct = (v: number | null | undefined) => (v === null || v === undefined ? "" : (v * 100).toFixed(2));
+    const esc = (cell: string) => (/[",\n]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell);
+    const header = ["Model", "Model ID", "Provider", "Results", "Successful", "Accuracy", "Faithfulness", "Hallucination", "Completeness", "Toxicity", "Bias", "Safety", "Latency (ms)", "Cost ($)"];
+    const rows = aggregatedRows.map((r) => [
+      r.modelName,
+      r.modelId,
+      r.provider,
+      String(r.count),
+      String(r.successful),
+      fmtPct(r.accuracy),
+      fmtPct(r.faithfulness),
+      fmtPct(r.hallucination),
+      fmtPct(r.completeness),
+      fmtPct(r.toxicity),
+      fmtPct(r.bias),
+      fmtPct(r.safety),
+      r.latency !== null && r.latency !== undefined ? String(Math.round(r.latency)) : "",
+      r.cost !== null && r.cost !== undefined ? r.cost.toFixed(6) : "",
+    ]);
+    const csv = [header, ...rows].map((row) => row.map(esc).join(",")).join("\n");
+    const fileStem = run ? run.id.slice(0, 16) : "run";
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `run-${fileStem}-summary.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const ok = results.filter((r) => r.status === "success");
   const errCount = results.length - ok.length;
@@ -221,6 +255,7 @@ export default function RunDetailPage() {
         description={`Run of "${run.datasetName}" â€¢ ${run.modelNames.length} model${run.modelNames.length === 1 ? "" : "s"}`}
         action={
           <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" leftIcon={<Download className="h-3.5 w-3.5" />} onClick={exportCsv}>Export CSV</Button>
             <Link href={`/experiments/${run.experimentId}`}>
               <Button variant="ghost" size="sm" leftIcon={<ExternalLink className="h-3.5 w-3.5" />}>Experiment</Button>
             </Link>

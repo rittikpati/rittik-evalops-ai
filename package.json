@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "vercel-build": "node scripts/deploy-migrate.mjs && npm run build"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.5",

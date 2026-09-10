@@ -10,8 +10,11 @@ const UNAUTHENTICATED_JSON = () =>
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Auth endpoints handle their own session logic (login/logout/session).
+// Auth endpoints handle their own session logic (login/logout/session).
   if (pathname.startsWith("/api/auth")) return NextResponse.next();
+
+  // Public liveness probe for uptime monitors.
+  if (pathname === "/api/health") return NextResponse.next();
 
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   const payload = token ? verifySession(token) : null;

@@ -82,6 +82,7 @@ export default function ComparisonPage() {
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" }>({ key: "accuracy", direction: "desc" });
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [query, setQuery] = useState("");
+  const [exportStamp] = useState(() => Date.now());
 
   const loadRuns = () => {
     setLoading(true);
@@ -122,6 +123,32 @@ export default function ComparisonPage() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     success("Export complete", "Comparison run data downloaded as JSON.");
+  };
+
+  const exportComparisonCsv = () => {
+    if (sortedData.length === 0) {
+      toastError("Nothing to export", "Run an experiment to generate comparison data first.");
+      return;
+    }
+    const esc = (cell: string) => (/[",\n]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell);
+    const header = ["Model", "Model ID", ...metricDefs.map((m) => m.label), "Results"];
+    const rows = sortedData.map((r) => [
+      r.modelName,
+      r.modelId,
+      ...metricDefs.map((m) => metricDefs.find((d) => d.key === m.key)?.format(r.metrics[m.key]) ?? String(r.metrics[m.key])),
+      String(r.resultsCount),
+    ]);
+    const csv = [header, ...rows].map((row) => row.map(esc).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `model-comparison-${exportStamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    success("Export complete", "Comparison data downloaded as CSV.");
   };
 
   const shareComparison = async () => {
@@ -300,7 +327,8 @@ export default function ComparisonPage() {
         description="Compare real evaluated models across metrics â€” data from the latest run"
         action={
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" leftIcon={<Download className="h-3.5 w-3.5" />} onClick={exportComparison}>Export</Button>
+            <Button variant="ghost" size="sm" leftIcon={<Download className="h-3.5 w-3.5" />} onClick={exportComparisonCsv}>Export CSV</Button>
+            <Button variant="ghost" size="sm" leftIcon={<Download className="h-3.5 w-3.5" />} onClick={exportComparison}>Export JSON</Button>
             <Button variant="ghost" size="sm" leftIcon={<Share2 className="h-3.5 w-3.5" />} onClick={shareComparison}>Share</Button>
           </div>
         }
